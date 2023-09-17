@@ -8,7 +8,8 @@ from extensions.openai.defaults import clamp, default, get_default_req_params
 from extensions.openai.errors import InvalidRequestError
 from extensions.openai.utils import debug_msg, end_line
 from modules import shared
-from modules.text_generation import decode, encode, generate_reply
+from modules.text_generation import decode, encode
+from extensions.openai.text_generation_nostream import generate_reply
 from transformers import LogitsProcessor, LogitsProcessorList
 
 
@@ -85,9 +86,18 @@ def marshal_common_params(body):
     req_params['suffix'] = default(body, 'suffix', req_params['suffix'])
     req_params['temperature'] = clamp(default(body, 'temperature', req_params['temperature']), 0.01, 1.99)  # fixup absolute 0.0/2.0
     req_params['top_p'] = clamp(default(body, 'top_p', req_params['top_p']), 0.01, 1.0)
+
+    # Removed to support num_return_sequences
+    # if n != 1:
+    #     raise InvalidRequestError(message="Only n = 1 is supported.", param='n')
+
+    # Added support for num_return_sequences
     n = default(body, 'n', 1)
-    if n != 1:
-        raise InvalidRequestError(message="Only n = 1 is supported.", param='n')
+    req_params['num_return_sequences'] = n
+    req_params['num_beams'] = default(body, 'num_beams', 1)
+    if req_params['num_beams'] < req_params['num_return_sequences']:
+        req_params['num_beams'] = req_params['num_return_sequences']
+    req_params['no_repeat_ngram_size'] = default(body, 'no_repeat_ngram_size', 0)
 
     if 'stop' in body:  # str or array, max len 4 (ignored)
         if isinstance(body['stop'], str):
@@ -323,7 +333,6 @@ def chat_completions(body: dict, is_legacy: bool = False) -> dict:
 
 # generator
 def stream_chat_completions(body: dict, is_legacy: bool = False):
-
     # Chat Completions
     stream_object_type = 'chat.completions.chunk'
     created_time = int(time.time())
@@ -484,30 +493,29 @@ def completions(body: dict, is_legacy: bool = False):
 
         # generate reply #######################################
         debug_msg({'prompt': prompt, 'req_params': req_params})
-        generator = generate_reply(prompt, req_params, stopping_strings=stopping_strings, is_chat=False)
-        answer = ''
+        choices = generate_reply(prompt, req_params, stopping_strings=stopping_strings, is_chat=False)
 
-        for a in generator:
+        for a in choices:
             answer = a
 
-        # strip extra leading space off new generated content
-        if answer and answer[0] == ' ':
-            answer = answer[1:]
+            # strip extra leading space off new generated content
+            if answer and answer[0] == ' ':
+                answer = answer[1:]
 
-        completion_token_count = len(encode(answer)[0])
-        total_completion_token_count += completion_token_count
-        stop_reason = "stop"
-        if token_count + completion_token_count >= req_params['truncation_length'] or completion_token_count >= max_tokens:
-            stop_reason = "length"
+            completion_token_count = len(encode(answer)[0])
+            total_completion_token_count += completion_token_count
+            stop_reason = "stop"
+            if token_count + completion_token_count >= req_params['truncation_length'] or completion_token_count >= max_tokens:
+                stop_reason = "length"
 
-        respi = {
-            "index": idx,
-            "finish_reason": stop_reason,
-            "text": answer,
-            "logprobs": {'top_logprobs': [logprob_proc.token_alternatives]} if logprob_proc else None,
-        }
+            respi = {
+                "index": idx,
+                "finish_reason": stop_reason,
+                "text": answer,
+                "logprobs": {'top_logprobs': [logprob_proc.token_alternatives]} if logprob_proc else None,
+            }
 
-        resp_list_data.extend([respi])
+            resp_list_data.extend([respi])
 
     resp = {
         "id": cmpl_id,
