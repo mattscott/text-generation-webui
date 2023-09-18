@@ -25,6 +25,8 @@ from modules.text_generation import encode, decode, get_encoded_length, get_toke
     fix_gpt4chan, fix_galactica, get_reply_from_output_ids, set_manual_seed, stop_everything_event, apply_stopping_strings
 
 def generate_reply(*args, **kwargs):
+    print(f'args: {args}')
+    print(f'args: {kwargs}')
     replies = []
     try:
         shared.generation_lock.acquire()
