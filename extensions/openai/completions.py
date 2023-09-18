@@ -20,7 +20,11 @@ class LogitsBiasProcessor(LogitsProcessor):
         if self.logit_bias:
             self.keys = list([int(key) for key in self.logit_bias.keys()])
             values = [self.logit_bias[str(key)] for key in self.keys]
-            self.values = torch.tensor(values, dtype=torch.float, device=shared.model.device)
+            if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel', 'Exllamav2Model',
+                                                   'CtransformersModel']:
+                self.values = torch.tensor(values, dtype=torch.float)
+            else:
+                self.values = torch.tensor(values, dtype=torch.float, device=shared.model.device)
             debug_msg(f"{self})")
 
     def __call__(self, input_ids: torch.LongTensor, logits: torch.FloatTensor) -> torch.FloatTensor:
@@ -438,6 +442,7 @@ def stream_chat_completions(body: dict, is_legacy: bool = False):
 
 
 def completions(body: dict, is_legacy: bool = False):
+    print(f'completions body: {body}')
     # Legacy
     # Text Completions
     object_type = 'text_completion'
