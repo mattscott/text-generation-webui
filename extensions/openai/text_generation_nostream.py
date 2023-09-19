@@ -1,12 +1,9 @@
 import ast
-import copy
 import html
-import random
-import re
 import time
 import traceback
+import json
 
-import numpy as np
 import torch
 import transformers
 from transformers import LogitsProcessorList
@@ -18,22 +15,33 @@ from modules.callbacks import (
     _StopEverythingStoppingCriteria
 )
 from modules.extensions import apply_extensions
-from modules.html_generator import generate_4chan_html, generate_basic_html
 from modules.logging_colors import logger
 from modules.models import clear_torch_cache, local_rank
 from modules.text_generation import encode, decode, get_encoded_length, get_token_ids, get_max_prompt_length, generate_reply_wrapper, formatted_outputs, \
-    fix_gpt4chan, fix_galactica, get_reply_from_output_ids, set_manual_seed, stop_everything_event, apply_stopping_strings
+    fix_gpt4chan, fix_galactica, set_manual_seed, stop_everything_event, apply_stopping_strings
+
+def get_reply_from_output_ids(output_ids, input_ids, original_question, state, is_chat=False):
+    if shared.is_seq2seq:
+        reply = decode(output_ids, state['skip_special_tokens'])
+    else:
+        new_tokens = len(output_ids) - len(input_ids[0])
+        reply = decode(output_ids[-new_tokens:], state['skip_special_tokens'])
+        # Prevent LlamaTokenizer from skipping a space
+        if type(shared.tokenizer) in [transformers.LlamaTokenizer, transformers.LlamaTokenizerFast] and len(output_ids) > 0:
+            if shared.tokenizer.convert_ids_to_tokens(int(output_ids[-new_tokens])).startswith('▁'):
+                reply = ' ' + reply
+
+    return reply
 
 def generate_reply(*args, **kwargs):
-    print(f'generate_reply args: {args}')
-    print(f'generate_reply kwargs: {kwargs}')
     replies = []
     try:
         shared.generation_lock.acquire()
         results = _generate_reply(*args, **kwargs)
         for result in results:
             replies.append(result)
-    except Exception:
+    except Exception as e:
+        print(f"Exception: {e}")
         traceback.print_exc()
     finally:
         shared.generation_lock.release()
@@ -118,7 +126,6 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
 
     # Encode the input
     input_ids = encode(question, add_bos_token=state['add_bos_token'], truncation_length=get_max_prompt_length(state))
-    output = input_ids[0]
     cuda = not any((shared.args.cpu, shared.args.deepspeed))
     if state['auto_max_new_tokens']:
         generate_params['max_new_tokens'] = state['truncation_length'] - input_ids.shape[-1]
@@ -155,7 +162,8 @@ def generate_reply_HF(question, original_question, seed, state, stopping_strings
                 new_tokens += len(output) - (original_tokens if not shared.is_seq2seq else 0)
                 reply = get_reply_from_output_ids(output, input_ids, original_question, state, is_chat=is_chat)
                 replies.append(reply)
-    except Exception:
+    except Exception as e:
+        print(f"Exception: {e}")
         traceback.print_exc()
     finally:
         t1 = time.time()
@@ -176,10 +184,11 @@ def generate_reply_custom(question, original_question, seed, state, stopping_str
     t0 = time.time()
     reply = ''
     try:
-        # This is likely incorrect since the model will generate a raw output_ids
+        # This is likely be incorrect since the model will generate a raw output_ids
         reply = shared.model.generate(question, state)
         replies.append(reply)
-    except Exception:
+    except Exception as e:
+        print(f"Exception: {e}")
         traceback.print_exc()
     finally:
         t1 = time.time()

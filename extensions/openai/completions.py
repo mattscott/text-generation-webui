@@ -1,5 +1,5 @@
 import time
-
+import json
 import tiktoken
 import torch
 import torch.nn.functional as F
@@ -12,7 +12,6 @@ from modules.text_generation import decode, encode
 from extensions.openai.text_generation_nostream import generate_reply
 from transformers import LogitsProcessor, LogitsProcessorList
 
-
 # Thanks to @Cypherfox [Cypherfoxy] for the logits code, blame to @matatonic
 class LogitsBiasProcessor(LogitsProcessor):
     def __init__(self, logit_bias={}):
@@ -20,8 +19,7 @@ class LogitsBiasProcessor(LogitsProcessor):
         if self.logit_bias:
             self.keys = list([int(key) for key in self.logit_bias.keys()])
             values = [self.logit_bias[str(key)] for key in self.keys]
-            if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel', 'Exllamav2Model',
-                                                   'CtransformersModel']:
+            if shared.model.__class__.__name__ in ['LlamaCppModel', 'RWKVModel', 'ExllamaModel', 'Exllamav2Model', 'CtransformersModel']:
                 self.values = torch.tensor(values, dtype=torch.float)
             else:
                 self.values = torch.tensor(values, dtype=torch.float, device=shared.model.device)
@@ -121,6 +119,7 @@ def marshal_common_params(body):
     logits_processor = []
     logit_bias = body.get('logit_bias', None)
     if logit_bias:  # {str: float, ...}
+        # We are always going to pass in the correct encoding
         # XXX convert tokens from tiktoken based on requested model
         # Ex.: 'logit_bias': {'1129': 100, '11442': 100, '16243': 100}
         try:
@@ -442,7 +441,6 @@ def stream_chat_completions(body: dict, is_legacy: bool = False):
 
 
 def completions(body: dict, is_legacy: bool = False):
-    print(f'completions body: {body}')
     # Legacy
     # Text Completions
     object_type = 'text_completion'
@@ -497,7 +495,6 @@ def completions(body: dict, is_legacy: bool = False):
             raise InvalidRequestError(message=err_msg, param=max_tokens_str)
 
         # generate reply #######################################
-        debug_msg({'prompt': prompt, 'req_params': req_params})
         choices = generate_reply(prompt, req_params, stopping_strings=stopping_strings, is_chat=False)
 
         for a in choices:
@@ -534,7 +531,6 @@ def completions(body: dict, is_legacy: bool = False):
             "total_tokens": total_prompt_token_count + total_completion_token_count
         }
     }
-
     return resp
 
 
